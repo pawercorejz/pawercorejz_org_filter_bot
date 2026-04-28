@@ -11,43 +11,61 @@ BOT_TOKEN = os.getenv("BOT_TOKEN")
 user_queues = {}
 user_tasks = {}
 
-# --- ФИЛЬТР ФИО ---
 def is_person(fullname):
     if not fullname:
         return False
 
     text = str(fullname).strip()
+    lower = text.lower()
     parts = text.split()
 
+    # строго 3 слова
     if len(parts) != 3:
         return False
 
     bad_words = [
         "ооо", "оао", "ао", "зао", "пао", "ип",
         "компания", "управляющая", "организация",
-        "администрация", "отдел", "управление",
-        "участок", "полиция", "суд", "банк",
-        "школа", "университет", "институт",
-        "центр", "служба", "фонд", "завод",
-        "фабрика", "предприятие", "общество",
-        "департамент", "комитет", "больница",
-        "поликлиника", "магазин", "кафе",
-        "группа", "холдинг", "жкх", "тсж"
+        "администрация", "отдел", "отделение", "управление",
+        "участок", "полиция", "суд", "банк", "школа",
+        "лицей", "гимназия", "университет", "институт",
+        "колледж", "центр", "служба", "фонд", "завод",
+        "фабрика", "предприятие", "общество", "товарищество",
+        "кооператив", "агентство", "министерство",
+        "департамент", "комитет", "больница", "поликлиника",
+        "клиника", "аптека", "магазин", "салон", "студия",
+        "кафе", "ресторан", "группа", "холдинг", "жкх",
+        "тсж", "жск", "снт",
+
+        "федерация", "училище", "мтц", "энергетика",
+        "комплекс", "гимнастика", "онкодиспансер",
+        "рдз", "комиссия", "фбуагентство", "транспорта",
+        "металлистизделие", "лаборатория", "хроматографии",
+        "терминал", "многофункциональный", "мазутный",
+        "музыкальное", "художественной", "апелляционная",
+        "тверской", "северное", "тушино", "промышленная",
+
+        "джет", "сервис", "мир", "рти", "петербург",
+        "алюминстрой", "рекламные", "материалы",
+        "монтажника", "ммуc", "ммус", "контур", "фокус",
+        "кузовной", "цех", "алмас", "лотос", "действует",
+        "медиа", "бизнес", "консалтинг", "цирк", "вывоз",
+        "мусора", "долгопрудный", "маллиотт", "бульвар",
+        "отель", "команда", "нпо", "монолит", "миэль",
+        "курской", "транс", "лига", "мгу", "ломоносова"
     ]
 
-    lower = text.lower()
     for word in bad_words:
         if word in lower:
             return False
 
+    # каждое слово: кириллица, первая буква заглавная
     for part in parts:
         if not re.match(r"^[А-ЯЁ][а-яё-]+$", part):
             return False
 
     return True
 
-
-# --- ОБРАБОТКА EXCEL ---
 def process_excel(input_path, output_path):
     wb = load_workbook(input_path, read_only=True, data_only=True)
     ws = wb.active
@@ -63,12 +81,11 @@ def process_excel(input_path, output_path):
     except ValueError:
         raise Exception("Не нашёл столбцы request и FullName")
 
-    address_col = None
-    if "address" in headers_lower:
-        address_col = headers_lower.index("address")
+    address_col = headers_lower.index("address") if "address" in headers_lower else None
 
     new_wb = Workbook()
     new_ws = new_wb.active
+    new_ws.title = "result"
     new_ws.append(["request", "FullName", "Address"])
 
     count = 0
@@ -76,7 +93,7 @@ def process_excel(input_path, output_path):
     for row in rows:
         fullname = row[fullname_col]
 
-        # ✔️ оставляем ФИО + пустые
+        # оставляем ФИО или пустой FullName
         if is_person(fullname) or fullname is None or str(fullname).strip() == "":
             address_value = row[address_col] if address_col is not None else ""
 
@@ -90,21 +107,17 @@ def process_excel(input_path, output_path):
     new_wb.save(output_path)
     return count
 
-
-# --- START ---
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "Я готов ✅\n"
         "Кидай Excel файлы (.xlsx)\n\n"
         "🔹 Можно сразу 4–6 файлов\n"
         "🔹 Удаляю организации\n"
-        "🔹 Оставляю ФИО (3 слова)\n"
-        "🔹 Пустые строки сохраняю\n"
+        "🔹 Оставляю ФИО: 3 слова кириллицей\n"
+        "🔹 Пустые FullName сохраняю\n"
         "🔹 Address не обязателен"
     )
 
-
-# --- ПРИЁМ ФАЙЛОВ ---
 async def handle_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
     document = update.message.document
 
@@ -127,8 +140,6 @@ async def handle_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if user_id not in user_tasks or user_tasks[user_id].done():
         user_tasks[user_id] = asyncio.create_task(process_queue(context, user_id))
 
-
-# --- ОЧЕРЕДЬ ---
 async def process_queue(context: ContextTypes.DEFAULT_TYPE, user_id: int):
     await asyncio.sleep(3)
 
@@ -159,7 +170,7 @@ async def process_queue(context: ContextTypes.DEFAULT_TYPE, user_id: int):
 
             tg_file = await document.get_file()
 
-            safe_name = document.file_name.replace("/", "_")
+            safe_name = document.file_name.replace("/", "_").replace("\\", "_")
             input_path = os.path.join(tempfile.gettempdir(), safe_name)
             output_name = safe_name.replace(".xlsx", "_filtered.xlsx")
             output_path = os.path.join(tempfile.gettempdir(), output_name)
@@ -194,8 +205,6 @@ async def process_queue(context: ContextTypes.DEFAULT_TYPE, user_id: int):
 
     await context.bot.send_message(chat_id=chat_id, text="✅ Все файлы обработаны")
 
-
-# --- MAIN ---
 def main():
     if not BOT_TOKEN:
         raise ValueError("BOT_TOKEN не найден")
@@ -210,7 +219,6 @@ def main():
     print("Бот запущен!")
 
     app.run_polling()
-
 
 if __name__ == "__main__":
     main()
