@@ -22,7 +22,6 @@ def is_person(fullname):
     if len(parts) != 3:
         return False
 
-    # стоп-слова организаций
     bad_words = [
         "ооо", "оао", "ао", "зао", "пао", "ип",
         "компания", "управляющая", "организация",
@@ -41,7 +40,6 @@ def is_person(fullname):
         if word in lower:
             return False
 
-    # строго формат ФИО
     for part in parts:
         if not re.match(r"^[А-ЯЁ][а-яё-]+$", part):
             return False
@@ -62,9 +60,12 @@ def process_excel(input_path, output_path):
     try:
         request_col = headers_lower.index("request")
         fullname_col = headers_lower.index("fullname")
-        address_col = headers_lower.index("address")
     except ValueError:
-        raise Exception("Не нашёл столбцы request, FullName, Address")
+        raise Exception("Не нашёл столбцы request и FullName")
+
+    address_col = None
+    if "address" in headers_lower:
+        address_col = headers_lower.index("address")
 
     new_wb = Workbook()
     new_ws = new_wb.active
@@ -75,14 +76,14 @@ def process_excel(input_path, output_path):
     for row in rows:
         fullname = row[fullname_col]
 
-        # ✔️ оставляем:
-        # - нормальные ФИО
-        # - ПУСТЫЕ строки (как ты хотел)
+        # ✔️ оставляем ФИО + пустые
         if is_person(fullname) or fullname is None or str(fullname).strip() == "":
+            address_value = row[address_col] if address_col is not None else ""
+
             new_ws.append([
                 row[request_col],
                 row[fullname_col],
-                row[address_col]
+                address_value
             ])
             count += 1
 
@@ -98,7 +99,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "🔹 Можно сразу 4–6 файлов\n"
         "🔹 Удаляю организации\n"
         "🔹 Оставляю ФИО (3 слова)\n"
-        "🔹 Пустые строки тоже сохраняю"
+        "🔹 Пустые строки сохраняю\n"
+        "🔹 Address не обязателен"
     )
 
 
