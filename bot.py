@@ -11,6 +11,35 @@ BOT_TOKEN = os.getenv("BOT_TOKEN")
 user_queues = {}
 user_tasks = {}
 
+
+def normalize_phone(value):
+    if value is None:
+        return ""
+
+    digits = re.sub(r"\D", "", str(value))
+
+    if len(digits) == 11 and digits.startswith("8"):
+        digits = "7" + digits[1:]
+
+    if len(digits) == 10:
+        digits = "7" + digits
+
+    return digits
+
+
+def load_blacklist():
+    blacklist = set()
+
+    if os.path.exists("blacklist.txt"):
+        with open("blacklist.txt", "r", encoding="utf-8") as f:
+            for line in f:
+                phone = normalize_phone(line.strip())
+                if phone:
+                    blacklist.add(phone)
+
+    return blacklist
+
+
 def is_person(fullname):
     if not fullname:
         return False
@@ -19,7 +48,6 @@ def is_person(fullname):
     lower = text.lower()
     parts = text.split()
 
-    # строго 3 слова
     if len(parts) != 3:
         return False
 
@@ -52,21 +80,27 @@ def is_person(fullname):
         "медиа", "бизнес", "консалтинг", "цирк", "вывоз",
         "мусора", "долгопрудный", "маллиотт", "бульвар",
         "отель", "команда", "нпо", "монолит", "миэль",
-        "курской", "транс", "лига", "мгу", "ломоносова"
+        "курской", "транс", "лига", "мгу", "ломоносова",
+
+        "минздрав", "правительство", "министерство",
+        "хозяйства", "комбинат", "техникум", "филиал",
+        "дирекция", "строительства", "ветеринарная", "станция"
     ]
 
     for word in bad_words:
         if word in lower:
             return False
 
-    # каждое слово: кириллица, первая буква заглавная
     for part in parts:
         if not re.match(r"^[А-ЯЁ][а-яё-]+$", part):
             return False
 
     return True
 
+
 def process_excel(input_path, output_path):
+    blacklist = load_blacklist()
+
     wb = load_workbook(input_path, read_only=True, data_only=True)
     ws = wb.active
 
@@ -88,35 +122,51 @@ def process_excel(input_path, output_path):
     new_ws.title = "result"
     new_ws.append(["request", "FullName", "Address"])
 
-    count = 0
+    total = 0
+    kept = 0
+    removed = 0
 
     for row in rows:
+        total += 1
+
+        number = normalize_phone(row[request_col])
         fullname = row[fullname_col]
 
-        # оставляем ФИО или пустой FullName
-        if is_person(fullname) or fullname is None or str(fullname).strip() == "":
-            address_value = row[address_col] if address_col is not None else ""
+        if number in blacklist:
+            removed += 1
+            continue
 
-            new_ws.append([
-                row[request_col],
-                row[fullname_col],
-                address_value
-            ])
-            count += 1
+        if not (is_person(fullname) or fullname is None or str(fullname).strip() == ""):
+            removed += 1
+            continue
+
+        address_value = row[address_col] if address_col is not None else ""
+
+        new_ws.append([
+            row[request_col],
+            row[fullname_col],
+            address_value
+        ])
+
+        kept += 1
 
     new_wb.save(output_path)
-    return count
+
+    percent = round((removed / total) * 100, 2) if total else 0
+
+    return kept, removed, total, percent
+
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "Я готов ✅\n"
         "Кидай Excel файлы (.xlsx)\n\n"
-        "🔹 Можно сразу 4–6 файлов\n"
         "🔹 Удаляю организации\n"
-        "🔹 Оставляю ФИО: 3 слова кириллицей\n"
-        "🔹 Пустые FullName сохраняю\n"
-        "🔹 Address не обязателен"
+        "🔹 Удаляю номера из blacklist.txt\n"
+        "🔹 Оставляю ФИО и пустые FullName\n"
+        "🔹 Показываю статистику очистки"
     )
+
 
 async def handle_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
     document = update.message.document
@@ -140,13 +190,14 @@ async def handle_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if user_id not in user_tasks or user_tasks[user_id].done():
         user_tasks[user_id] = asyncio.create_task(process_queue(context, user_id))
 
+
 async def process_queue(context: ContextTypes.DEFAULT_TYPE, user_id: int):
     await asyncio.sleep(3)
 
     queue = user_queues.get(user_id, [])
-    total = len(queue)
+    total_files = len(queue)
 
-    if total == 0:
+    if total_files == 0:
         return
 
     chat_id = queue[0]["chat_id"]
@@ -159,7 +210,7 @@ async def process_queue(context: ContextTypes.DEFAULT_TYPE, user_id: int):
 
         progress = await context.bot.send_message(
             chat_id=chat_id,
-            text=f"🔴 0% | Файл {file_index} из {total}\n{document.file_name}"
+            text=f"🔴 0% | Файл {file_index} из {total_files}\n{document.file_name}"
         )
 
         input_path = None
@@ -179,16 +230,24 @@ async def process_queue(context: ContextTypes.DEFAULT_TYPE, user_id: int):
 
             await progress.edit_text(f"🟡 50% | Обрабатываю\n{document.file_name}")
 
-            count = process_excel(input_path, output_path)
+            kept, removed, total, percent = process_excel(input_path, output_path)
 
             await progress.edit_text(f"🟢 75% | Отправляю\n{document.file_name}")
+
+            caption = (
+                f"Готово ✅\n"
+                f"Осталось: {kept}\n"
+                f"Удалено: {removed}\n"
+                f"Всего: {total}\n"
+                f"Очистка: {percent}%"
+            )
 
             with open(output_path, "rb") as f:
                 await context.bot.send_document(
                     chat_id=chat_id,
                     document=f,
                     filename=output_name,
-                    caption=f"Готово ✅\nСтрок: {count}"
+                    caption=caption
                 )
 
             await progress.edit_text(f"✅ 100% | Готово\n{document.file_name}")
@@ -205,6 +264,7 @@ async def process_queue(context: ContextTypes.DEFAULT_TYPE, user_id: int):
 
     await context.bot.send_message(chat_id=chat_id, text="✅ Все файлы обработаны")
 
+
 def main():
     if not BOT_TOKEN:
         raise ValueError("BOT_TOKEN не найден")
@@ -219,6 +279,7 @@ def main():
     print("Бот запущен!")
 
     app.run_polling()
+
 
 if __name__ == "__main__":
     main()
