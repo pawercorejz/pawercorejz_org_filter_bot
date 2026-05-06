@@ -12,6 +12,12 @@ user_queues = {}
 user_tasks = {}
 
 
+def progress_bar(percent):
+    filled = int(percent / 10)
+    empty = 10 - filled
+    return "█" * filled + "░" * empty
+
+
 def normalize_phone(value):
     if value is None:
         return ""
@@ -159,12 +165,12 @@ def process_excel(input_path, output_path):
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        "Я готов ✅\n"
+        "🚀 Я готов\n\n"
         "Кидай Excel файлы (.xlsx)\n\n"
         "🔹 Удаляю организации\n"
         "🔹 Удаляю номера из blacklist.txt\n"
         "🔹 Оставляю ФИО и пустые FullName\n"
-        "🔹 Показываю статистику очистки"
+        "🔹 Показываю красивую статистику"
     )
 
 
@@ -172,7 +178,7 @@ async def handle_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
     document = update.message.document
 
     if not document.file_name.lower().endswith(".xlsx"):
-        await update.message.reply_text("Только .xlsx файл")
+        await update.message.reply_text("⚠️ Только .xlsx файл")
         return
 
     user_id = update.effective_user.id
@@ -185,7 +191,7 @@ async def handle_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "chat_id": update.effective_chat.id
     })
 
-    await update.message.reply_text(f"Файл принят ✅ {document.file_name}")
+    await update.message.reply_text(f"📥 Файл принят ✅\n{document.file_name}")
 
     if user_id not in user_tasks or user_tasks[user_id].done():
         user_tasks[user_id] = asyncio.create_task(process_queue(context, user_id))
@@ -210,14 +216,24 @@ async def process_queue(context: ContextTypes.DEFAULT_TYPE, user_id: int):
 
         progress = await context.bot.send_message(
             chat_id=chat_id,
-            text=f"🔴 0% | Файл {file_index} из {total_files}\n{document.file_name}"
+            text=(
+                f"🚀 Запускаю обработку\n"
+                f"{progress_bar(0)} 0%\n\n"
+                f"📄 Файл {file_index} из {total_files}\n"
+                f"{document.file_name}"
+            )
         )
 
         input_path = None
         output_path = None
 
         try:
-            await progress.edit_text(f"🟠 25% | Скачиваю\n{document.file_name}")
+            await asyncio.sleep(0.4)
+            await progress.edit_text(
+                f"📥 Скачиваю файл...\n"
+                f"{progress_bar(15)} 15%\n\n"
+                f"📄 {document.file_name}"
+            )
 
             tg_file = await document.get_file()
 
@@ -228,18 +244,50 @@ async def process_queue(context: ContextTypes.DEFAULT_TYPE, user_id: int):
 
             await tg_file.download_to_drive(input_path)
 
-            await progress.edit_text(f"🟡 50% | Обрабатываю\n{document.file_name}")
+            await asyncio.sleep(0.4)
+            await progress.edit_text(
+                f"🧠 Анализирую структуру файла...\n"
+                f"{progress_bar(30)} 30%\n\n"
+                f"📄 {document.file_name}"
+            )
+
+            await asyncio.sleep(0.4)
+            await progress.edit_text(
+                f"🔍 Проверяю blacklist...\n"
+                f"{progress_bar(45)} 45%\n\n"
+                f"📄 {document.file_name}"
+            )
+
+            await asyncio.sleep(0.4)
+            await progress.edit_text(
+                f"🧹 Удаляю организации и лишние строки...\n"
+                f"{progress_bar(65)} 65%\n\n"
+                f"📄 {document.file_name}"
+            )
 
             kept, removed, total, percent = process_excel(input_path, output_path)
 
-            await progress.edit_text(f"🟢 75% | Отправляю\n{document.file_name}")
+            await asyncio.sleep(0.4)
+            await progress.edit_text(
+                f"📊 Считаю статистику...\n"
+                f"{progress_bar(85)} 85%\n\n"
+                f"📄 {document.file_name}"
+            )
 
             caption = (
-                f"Готово ✅\n"
-                f"Осталось: {kept}\n"
-                f"Удалено: {removed}\n"
-                f"Всего: {total}\n"
-                f"Очистка: {percent}%"
+                f"✅ Файл обработан\n\n"
+                f"📄 Файл: {document.file_name}\n"
+                f"📊 Всего строк: {total}\n\n"
+                f"🟢 Осталось: {kept}\n"
+                f"🔴 Удалено: {removed}\n"
+                f"📉 Очистка: {percent}%"
+            )
+
+            await asyncio.sleep(0.4)
+            await progress.edit_text(
+                f"📤 Отправляю результат...\n"
+                f"{progress_bar(95)} 95%\n\n"
+                f"📄 {document.file_name}"
             )
 
             with open(output_path, "rb") as f:
@@ -250,11 +298,18 @@ async def process_queue(context: ContextTypes.DEFAULT_TYPE, user_id: int):
                     caption=caption
                 )
 
-            await progress.edit_text(f"✅ 100% | Готово\n{document.file_name}")
+            await progress.edit_text(
+                f"✅ Готово\n"
+                f"{progress_bar(100)} 100%\n\n"
+                f"📄 {document.file_name}"
+            )
 
         except Exception as e:
-            await progress.edit_text(f"❌ Ошибка\n{document.file_name}")
-            await context.bot.send_message(chat_id=chat_id, text=str(e))
+            await progress.edit_text(
+                f"❌ Ошибка обработки\n\n"
+                f"📄 {document.file_name}\n"
+                f"⚠️ {e}"
+            )
 
         finally:
             if input_path and os.path.exists(input_path):
@@ -262,7 +317,10 @@ async def process_queue(context: ContextTypes.DEFAULT_TYPE, user_id: int):
             if output_path and os.path.exists(output_path):
                 os.remove(output_path)
 
-    await context.bot.send_message(chat_id=chat_id, text="✅ Все файлы обработаны")
+    await context.bot.send_message(
+        chat_id=chat_id,
+        text="✅ Все файлы обработаны"
+    )
 
 
 def main():
