@@ -224,11 +224,14 @@ def process_excel(input_path, output_path):
             removed += 1
             continue
 
-        address_value = (
-            row[address_col]
-            if address_col is not None
-            else ""
-        )
+        address_value = ""
+
+        if address_col is not None and row[address_col]:
+
+            address_value = str(row[address_col])
+
+            if "central federal region" in address_value.lower():
+                address_value = ""
 
         new_ws.append([
             row[request_col],
